@@ -4,15 +4,15 @@ import numpy as np
 import time
 from scipy.stats import beta
 
-from bandits import BernoulliBandit
-
+from bandits import Bandit, MarkovBandit
+from tqdm import tqdm
 
 class Solver(object):
     def __init__(self, bandit):
         """
         bandit (Bandit): the target bandit to solve.
         """
-        assert isinstance(bandit, BernoulliBandit)
+        assert isinstance(bandit, Bandit)
         np.random.seed(int(time.time()))
 
         self.bandit = bandit
@@ -22,9 +22,17 @@ class Solver(object):
         self.regret = 0.  # Cumulative regret.
         self.regrets = [0.]  # History of cumulative regret.
 
+    #def update_regret(self, i):
+    #    # i (int): index of the selected machine.
+    #    self.regret += self.bandit.best_proba - self.bandit.probas[i]
+    #    self.regrets.append(self.regret)
+
     def update_regret(self, i):
         # i (int): index of the selected machine.
-        self.regret += self.bandit.best_proba - self.bandit.probas[i]
+        if i == self.bandit.reward_state:
+            self.regret += self.bandit.best_proba - 0
+        else:
+            self.regret += self.bandit.best_proba - self.bandit.M[i,self.bandit.reward_state]
         self.regrets.append(self.regret)
 
     @property
@@ -37,7 +45,7 @@ class Solver(object):
 
     def run(self, num_steps):
         assert self.bandit is not None
-        for _ in range(num_steps):
+        for _ in tqdm(range(num_steps)):
             i = self.run_one_step()
 
             self.counts[i] += 1
