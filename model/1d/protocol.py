@@ -8,12 +8,12 @@ import numpy as np
 from pathlib import Path
 import time
 from msmbuilder.msm import MarkovStateModel
-from msmbuilder.cluster import RegularSpatial
+from msmbuilder.cluster import RegularSpatial, KMeans
 from tqdm import tqdm
 from model import *
 from collections import Counter
 
-class Protocol():
+class BaseProtocol():
     @staticmethod
     def factory(name):
         if name == 'naive':
@@ -30,6 +30,7 @@ class Protocol():
         self.n_cycle = args.n_cycle
         self.n_replica = args.n_replica
         self.output = Path('output')/self.name
+        self.cluster_method = args.cluster_method
     
     def run_cycle(self, s):
         s.run_mc(self.n_step)
@@ -56,7 +57,14 @@ class Protocol():
         self.dtrajs = []
         self.cluster_centers_ = None
         self.state_labels_ = None
-        self.cluster = RegularSpatial(d_min=1)
+        if self.cluster_method == 'regular':
+            self.cluster = RegularSpatial(d_min=1)
+        elif self.cluster_method == 'kmeans':
+            self.cluster = KMeans(n_clusters=100)
+            self.cluster.n_clusters_ = 100
+            self.cluster.d_min = 1
+        else:
+            raise Exception
         self.msm = MarkovStateModel(lag_time=10, n_timescales=10, verbose=False)
     
     def discretize_trajs(self):
@@ -91,7 +99,7 @@ class Protocol():
         pass
 
 
-class NaiveProtocol(Protocol):
+class NaiveProtocol(BaseProtocol):
     name = 'naive'
 
     def seed(self):
@@ -101,7 +109,7 @@ class NaiveProtocol(Protocol):
             s.set_position(pos)
 
 
-class VisitedScoreProtocol(Protocol):
+class VisitedScoreProtocol(BaseProtocol):
     name = 'visited_score'
 
     def seed(self):
@@ -114,7 +122,7 @@ class VisitedScoreProtocol(Protocol):
             s.set_position(pos)
             
 
-class AdaptiveProtocol(Protocol):
+class AdaptiveProtocol(BaseProtocol):
     name = 'adaptive'
 
     def seed(self):
