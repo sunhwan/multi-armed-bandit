@@ -20,8 +20,11 @@ class BaseProtocol():
             return NaiveProtocol()
         if name == 'visited_score':
             return VisitedScoreProtocol()
-        if name == 'adaptive':
-            return AdaptiveProtocol()
+        if name == 'greedy':
+            return EpsilonGreedy()
+        if name == 'ucb1':
+            return UCB1()
+        raise Exception
     
     def set_option(self, args):
         self.n_worker = args.n_worker
@@ -31,6 +34,7 @@ class BaseProtocol():
         self.n_replica = args.n_replica
         self.output = Path('output')/self.name
         self.cluster_method = args.cluster_method
+        self.t = 0
     
     def run_cycle(self, s):
         s.run_mc(self.n_step)
@@ -39,6 +43,8 @@ class BaseProtocol():
     def run(self):
         print(f"running {self.name} protocol")
         self.trajs = []
+        self.count = []
+        self.t += 1
         for cycle_i in range(self.n_cycle):
             print("cycle {} started:".format(cycle_i))
             with Parallel(n_jobs=self.n_worker) as parallel:
@@ -59,10 +65,6 @@ class BaseProtocol():
         self.state_labels_ = None
         if self.cluster_method == 'regular':
             self.cluster = RegularSpatial(d_min=1)
-        elif self.cluster_method == 'kmeans':
-            self.cluster = KMeans(n_clusters=100)
-            self.cluster.n_clusters_ = 100
-            self.cluster.d_min = 1
         else:
             raise Exception
         self.msm = MarkovStateModel(lag_time=10, n_timescales=10, verbose=False)
@@ -87,13 +89,38 @@ class BaseProtocol():
                 has_new_trajs = True
 
             if has_new_trajs:
-                cluster = RegularSpatial(d_min=1)
+                cluster = RegularSpatial(d_min=self.cluster.d_min)
                 cluster.fit(new_trajs)
                 self.cluster.cluster_centers_ = np.concatenate((self.cluster.cluster_centers_, cluster.cluster_centers_))
                 self.cluster.n_clusters_ += cluster.n_clusters_
 
             for traj in trajs:
                 self.dtrajs.append(self.cluster.predict([traj])[0])
+    
+    def update_estimates(self):
+        try:
+            msm = MarkovStateModel(lag_time=10, n_timescales=10, verbose=False)
+            msm.fit(self.dtrajs)
+        except:
+            msm = MarkovStateModel(lag_time=10, n_timescales=10, verbose=False, reversible_type='transpose')
+            msm.fit(self.dtrajs)
+        
+        self.estimates = np.ones(self.cluster.n_clusters_)
+        reward_states = np.intersect1d(self.reward_states, msm.state_labels_)
+        if len(reward_states) > 0:
+            for s_, s in enumerate(msm.state_labels_):
+                if s in reward_states:
+                    continue
+                self.estimates[s] = np.sum(msm.transmat_[s_,:][reward_states])
+        self.estimates /= np.sum(self.estimates)
+    
+    @property
+    def reward_states(self):
+        states = []
+        for ix, c in enumerate(self.cluster.cluster_centers_):
+            if c[0] > 80 and c[0] < 90:
+                states.append(ix)
+        return states
     
     def seed(self):
         pass
@@ -103,8 +130,8 @@ class NaiveProtocol(BaseProtocol):
     name = 'naive'
 
     def seed(self):
-        choices = np.random.choice(range(self.cluster.n_clusters_), self.n_replica)
         for i, s in enumerate(self.replica):
+            choices = np.random.choice(range(self.cluster.n_clusters_), self.n_replica)
             pos = self.cluster.cluster_centers_[choices[i]][0]
             s.set_position(pos)
 
@@ -114,17 +141,56 @@ class VisitedScoreProtocol(BaseProtocol):
 
     def seed(self):
         counter = Counter(np.concatenate(self.dtrajs))
-        score = [1/counter[i] for i in range(self.cluster.n_clusters_)]
+        score = [1./counter[i] for i in range(self.cluster.n_clusters_)]
         score /= np.sum(score)
-        choices = np.random.choice(range(self.cluster.n_clusters_), self.n_replica, p=score)
         for i, s in enumerate(self.replica):
+            choices = np.random.choice(range(self.cluster.n_clusters_), self.n_replica, p=score)
             pos = self.cluster.cluster_centers_[choices[i]][0]
             s.set_position(pos)
-            
 
-class AdaptiveProtocol(BaseProtocol):
-    name = 'adaptive'
+
+class EpsilonGreedy(BaseProtocol):
+    name = 'epsilon'
+    eps = 0.1
 
     def seed(self):
-        pass
-    
+        self.update_estimates()
+        for i, s in enumerate(self.replica):
+            if np.random.random() < self.eps:
+                choices = np.random.choice(range(self.cluster.n_clusters_), self.n_replica)
+                pos = self.cluster.cluster_centers_[choices[i]][0]
+                s.set_position(pos)
+            else:
+                #ix = np.argmax(self.estimates)
+                choices = np.random.choice(range(self.cluster.n_clusters_), self.n_replica, p=score)
+                pos = self.cluster.cluster_centers_[choices[i]][0]
+                s.set_position(pos)
+
+
+class UCB1(BaseProtocol):
+    name = 'ucb1'
+
+    def seed(self):
+        self.update_estimates()
+        counter = Counter(np.concatenate(self.dtrajs))
+        score = [self.estimates[i] + np.sqrt(2 * np.log(self.t) / (1 + counter[i])) for i in range(self.cluster.n_clusters_)]
+        score /= np.sum(score)
+        for i, s in enumerate(self.replica):
+            choices = np.random.choice(range(self.cluster.n_clusters_), self.n_replica, p=score)
+            pos = self.cluster.cluster_centers_[choices[i]][0]
+            print(f"new position: {pos}")
+            s.set_position(pos)
+
+
+class BayesianUCB(BaseProtocol):
+    name = 'bayes_ucb'
+
+    def seed(self):
+        self.update_estimates()
+        counter = Counter(np.concatenate(self.dtrajs))
+        score = [self.estimates[i] + np.sqrt(2 * np.log(self.t) / (1 + counter[i])) for i in range(self.cluster.n_clusters_)]
+        score /= np.sum(score)
+        for i, s in enumerate(self.replica):
+            choices = np.random.choice(range(self.cluster.n_clusters_), self.n_replica, p=score)
+            pos = self.cluster.cluster_centers_[choices[i]][0]
+            s.set_position(pos)

@@ -5,7 +5,7 @@ from protocol import *
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--protocol', default='naive', choices=['naive', 'visited_score', 'adaptive'])
+    parser.add_argument('--protocol', default='naive', choices=['naive', 'visited_score', 'greedy', 'ucb1'])
     parser.add_argument('--n_worker', default=10, type=int)
     parser.add_argument('--n_replica', default=10, type=int)
     parser.add_argument('--n_cycle', default=200, type=int)
@@ -15,7 +15,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     basedir = Path(args.outputdir)
-    prefix = f'{args.protocol}_{args.cluster_method}_{args.n_cycle}_{args.n_step}'
+    prefix = f'{args.protocol}_{args.n_replica}_{args.n_cycle}_{args.n_step}'
     outputdir = basedir/prefix
     outputdir.mkdir(parents=True, exist_ok=True)
 
